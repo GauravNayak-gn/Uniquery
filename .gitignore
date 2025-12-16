@@ -1,0 +1,25 @@
+# General
+.DS_Store
+.env
+.idea/
+.vscode/
+
+# Python / Backend
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+*.log
+scraped_data/
+chroma_db_backup*/
+backend/chroma_db/ # If you want to exclude the vector DB files
+*.pkl
+
+# Node / Frontend
+node_modules/
+dist/
+build/
+.npm
+*.local
