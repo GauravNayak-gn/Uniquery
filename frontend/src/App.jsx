@@ -1,203 +1,301 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ask, healthCheck } from './api/client';
 
+const Icons = {
+    Trash: () => (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 6h18"></path>
+            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+        </svg>
+    ),
+    FileText: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+        </svg>
+    ),
+    Mic: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+        </svg>
+    ),
+    StopCircle: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <circle cx="12" cy="12" r="10"></circle>
+        </svg>
+    )
+};
+
+// ... inside App component render ...
+// Replace 🗑️ with <Icons.Trash />
+// Replace 📄 with <Icons.FileText />
+// Replace 🎤 with <Icons.Mic />
+// Replace 🔴 with <Icons.StopCircle />
+
+
 export default function App() {
-    const [apiStatus, setApiStatus] = useState({ ok: false, message: 'Checking…' });
-    const [query, setQuery] = useState('');
-    const [withSources, setWithSources] = useState(true);
+    const [apiStatus, setApiStatus] = useState({ ok: false, message: 'Connecting…' });
+    const [messages, setMessages] = useState([]); // Array of { id, role, text, sources? }
+    const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
-    const [answer, setAnswer] = useState('');
-    const [sources, setSources] = useState([]);
-    const [error, setError] = useState('');
-    const controllerRef = useRef(null);
+    const [isSpeaking, setIsSpeaking] = useState(false);
+    const [isListening, setIsListening] = useState(false);
+
+    // Settings
+    const [withSources, setWithSources] = useState(true);
+
+    // Refs
+    const bottomRef = useRef(null);
+    const abortControllerRef = useRef(null);
+    const recognitionRef = useRef(null);
 
     const baseUrl = useMemo(
         () => (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, ''),
         []
     );
 
+    // 1. Init & Health Check
     useEffect(() => {
         const ctrl = new AbortController();
         healthCheck(ctrl.signal)
             .then((res) => {
-                setApiStatus({ ok: true, message: `Online (${res?.version || 'unknown'})` });
+                setApiStatus({ ok: true, message: 'Online' });
             })
-            .catch((e) => {
-                setApiStatus({ ok: false, message: e.message || 'Offline' });
+            .catch(() => {
+                setApiStatus({ ok: false, message: 'Offline' });
             });
-        return () => ctrl.abort();
+
+        // Init STT
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            const recognition = new SpeechRecognition();
+            recognition.continuous = false; // Stop after one sentence/phrase
+            recognition.lang = 'en-US';
+            recognition.interimResults = false;
+
+            recognition.onstart = () => setIsListening(true);
+            recognition.onend = () => setIsListening(false);
+            recognition.onerror = () => setIsListening(false);
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                setInput((prev) => (prev ? prev + ' ' + transcript : transcript));
+            };
+            recognitionRef.current = recognition;
+        }
+
+        return () => {
+            ctrl.abort();
+            if (recognitionRef.current) recognitionRef.current.abort();
+            window.speechSynthesis.cancel();
+        };
     }, []);
 
-    const onSubmit = async (e) => {
+    // 2. Auto-scroll
+    useEffect(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages, loading]);
+
+    // 3. Handlers
+    const handleSend = async (e) => {
         e?.preventDefault();
-        const q = query.trim();
-        if (!q) {
-            setError('Please enter a question.');
-            return;
-        }
-        setError('');
+        const text = input.trim();
+        if (!text) return;
+
+        // Add user message
+        const userMsg = { id: Date.now(), role: 'user', text };
+        setMessages((prev) => [...prev, userMsg]);
+        setInput('');
         setLoading(true);
-        setAnswer('');
-        setSources([]);
-        if (controllerRef.current) controllerRef.current.abort();
-        controllerRef.current = new AbortController();
+
+        // Stop TTS if speaking
+        window.speechSynthesis.cancel();
+        setIsSpeaking(false);
+
+        // Abort previous request
+        if (abortControllerRef.current) abortControllerRef.current.abort();
+        abortControllerRef.current = new AbortController();
 
         try {
-            const res = await ask(q, withSources, controllerRef.current.signal);
-            setAnswer(res.answer || '');
-            // Ensure UI ignores sources when toggle is off
-            setSources(withSources ? (res.sources || []) : []);
+            const res = await ask(text, withSources, abortControllerRef.current.signal);
+            const botMsg = {
+                id: Date.now() + 1,
+                role: 'bot',
+                text: res.answer,
+                sources: res.sources // Keep sources in data, visibility handled by UI
+            };
+            setMessages((prev) => [...prev, botMsg]);
         } catch (err) {
-            setError(err.message || 'Something went wrong.');
+            if (err.name !== 'AbortError') {
+                const errorMsg = { id: Date.now() + 2, role: 'bot', text: 'Sorry, something went wrong. Please try again.' };
+                setMessages((prev) => [...prev, errorMsg]);
+            }
         } finally {
             setLoading(false);
         }
     };
 
-    const onKeyDown = (e) => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            onSubmit(e);
-        }
+    const toggleListening = () => {
+        if (!recognitionRef.current) return alert('Speech recognition not supported');
+        if (isListening) recognitionRef.current.stop();
+        else recognitionRef.current.start();
     };
 
     return (
-        <div className="app">
+        <div className="layout">
+            {/* Header */}
             <header className="header">
-                <div className="title">
-                    <span className="logo">🎓</span>
-                    <div>
-                        <h1>D. K. Bhave Scholarship Assistant</h1>
-                        <p className="subtitle">Ask verified questions from SPPU’s DK Bhave Scholarship pages</p>
+                <div className="header-content">
+                    <div className="brand">
+                        <span className="logo-icon">🎓</span>
+                        <div>
+                            <h1>UniAssistant</h1>
+                            <div className={`status-badge ${apiStatus.ok ? 'online' : 'offline'}`}>
+                                {apiStatus.message}
+                            </div>
+                        </div>
                     </div>
-                </div>
-                <div className={`status ${apiStatus.ok ? 'ok' : 'bad'}`}>
-                    <span className="dot" />
-                    {apiStatus.message}
+                    <div className="header-actions">
+                        {/* Clear Chat */}
+                        {messages.length > 0 && (
+                            <button className="btn-icon" onClick={() => setMessages([])} title="Clear Chat">
+                                <Icons.Trash />
+                            </button>
+                        )}
+                    </div>
                 </div>
             </header>
 
-            <section className="card">
-                <form onSubmit={onSubmit}>
-                    <label htmlFor="query" className="label">Your question</label>
-                    <textarea
-                        id="query"
-                        className="textarea"
-                        placeholder="e.g., What are the eligibility criteria and how do I apply?"
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        onKeyDown={onKeyDown}
-                        rows={4}
-                    />
-                    <div className="controls">
-                        <div className="toggle">
-                            <input
-                                id="withSources"
-                                type="checkbox"
-                                checked={withSources}
-                                onChange={(e) => {
-                                    setWithSources(e.target.checked);
-                                }}
-                            />
-                            <label htmlFor="withSources">Return sources (/api/ask_with_sources)</label>
-                        </div>
-                        <div className="buttons">
-                            <button
-                                type="button"
-                                className="btn secondary"
-                                onClick={() => { setQuery(''); setAnswer(''); setSources([]); setError(''); }}
-                            >
-                                Clear
-                            </button>
-                            <button type="submit" className="btn primary" disabled={loading}>
-                                {loading ? 'Thinking…' : 'Ask'}
-                            </button>
+            {/* Chat Area */}
+            <main className="chat-feed">
+                {messages.length === 0 ? (
+                    <div className="welcome-placeholder">
+                        <div className="welcome-icon">👋</div>
+                        <h2>Hello! I'm your University Assistant.</h2>
+                        <p>Ask me about admissions, scholarships, or courses.</p>
+                    </div>
+                ) : (
+                    messages.map((msg) => (
+                        <MessageItem
+                            key={msg.id}
+                            msg={msg}
+                            isSpeaking={isSpeaking}
+                            setIsSpeaking={setIsSpeaking}
+                            withSources={withSources}
+                        />
+                    ))
+                )}
+
+                {loading && (
+                    <div className="message bot">
+                        <div className="avatar">🤖</div>
+                        <div className="bubble loading">
+                            <span className="dot">.</span><span className="dot">.</span><span className="dot">.</span>
                         </div>
                     </div>
-                    <p className="hint">Tip: Ctrl/Cmd + Enter to submit</p>
-                </form>
-            </section>
+                )}
+                <div ref={bottomRef} />
+            </main>
 
-            {error && (
-                <section className="card error">
-                    <strong>⚠️ {error}</strong>
-                </section>
-            )}
+            {/* Input Area */}
+            <footer className="input-area">
+                <div className="input-container">
+                    <form onSubmit={handleSend} className="input-bar">
+                        {/* Setting Toggle (Mini) */}
+                        <div className="setting-toggle">
+                            <input
+                                type="checkbox"
+                                id="src-toggle"
+                                checked={withSources}
+                                onChange={(e) => setWithSources(e.target.checked)}
+                            />
+                            <label htmlFor="src-toggle" title="Toggle Sources">
+                                {withSources ? <Icons.FileText /> : <span style={{ opacity: 0.5 }}><Icons.FileText /></span>}
+                            </label>
+                        </div>
 
-            {!!answer && (
-                <section className="card">
-                    <h3>Answer</h3>
-                    <div className="answer">{answer}</div>
-                </section>
-            )}
+                        <input
+                            className="text-input"
+                            placeholder="Ask a question..."
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            disabled={loading}
+                        />
 
-            {withSources && Array.isArray(sources) && sources.length > 0 && (
-                <section className="card">
-                    <h3>Sources</h3>
-                    <ul className="sources">
-                        {sources.map((s, i) => (
-                            <SourceItem key={s.doc_id ?? i} source={s} />
-                        ))}
-                    </ul>
-                </section>
-            )}
+                        <button type="button" className={`btn-mic ${isListening ? 'active' : ''}`} onClick={toggleListening}>
+                            {isListening ? <Icons.StopCircle /> : <Icons.Mic />}
+                        </button>
 
-            <footer className="footer">
-                <span className="muted">
-                    API: <code>{baseUrl}</code> • Docs: <a href={`${baseUrl}/docs`} target="_blank" rel="noreferrer">/docs</a>
-                </span>
+                        <button type="submit" className="btn-send" disabled={!input.trim() || loading}>
+                            ➤
+                        </button>
+                    </form>
+                    <div className="disclaimer">AI can make mistakes. Please verify important info.</div>
+                </div>
             </footer>
         </div>
     );
 }
 
-function SourceItem({ source }) {
-    const [expanded, setExpanded] = useState(false);
-    const {
-        doc_id,
-        source: src = '',
-        page_type,
-        title,
-        content_preview,
-    } = source || {};
+// Sub-components
+function MessageItem({ msg, isSpeaking, setIsSpeaking, withSources }) {
+    const isBot = msg.role === 'bot';
 
-    const displayUrl = typeof src === 'string' ? src : '';
-    const isUrl = /^https?:\/\//i.test(displayUrl);
-
-    const preview = content_preview || '';
-    const short = preview && preview.length > 260 ? preview.slice(0, 260) + '…' : preview;
+    const handleSpeak = () => {
+        if (!window.speechSynthesis) return;
+        if (isSpeaking) {
+            window.speechSynthesis.cancel();
+            setIsSpeaking(false);
+        } else {
+            const ut = new SpeechSynthesisUtterance(msg.text);
+            ut.onend = () => setIsSpeaking(false);
+            ut.onerror = () => setIsSpeaking(false);
+            setIsSpeaking(true);
+            window.speechSynthesis.speak(ut);
+        }
+    };
 
     return (
-        <li className="source">
-            <div className="source-header">
-                <div className="badge">#{doc_id ?? '–'}</div>
-                <div className="source-meta">
-                    {title && <div className="source-title">{title}</div>}
-                    <div className="source-sub">
-                        {page_type && <span className="tag">{page_type}</span>}
-                        {displayUrl && (
-                            <>
-                                <span className="sep">•</span>
-                                {isUrl ? (
-                                    <a href={displayUrl} target="_blank" rel="noreferrer" className="link">{displayUrl}</a>
-                                ) : (
-                                    <span className="muted">{displayUrl}</span>
-                                )}
-                            </>
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {preview && (
-                <div className="source-preview">
-                    <div className="preview-text">{expanded ? preview : short}</div>
-                    {preview.length > 260 && (
-                        <button className="btn linklike" onClick={() => setExpanded((v) => !v)}>
-                            {expanded ? 'Show less' : 'Show more'}
-                        </button>
+        <div className={`message ${msg.role}`}>
+            {isBot && <div className="avatar">🤖</div>}
+            <div className="content-stack">
+                <div className="bubble">
+                    <div className="text">{msg.text}</div>
+                    {isBot && (
+                        <div className="bubble-actions">
+                            <button onClick={handleSpeak} className="action-btn" title="Read Aloud">
+                                {isSpeaking ? <Icons.StopCircle /> : <span style={{ fontSize: '1.2em' }}>🔊</span>}
+                            </button>
+                        </div>
                     )}
                 </div>
-            )}
-        </li>
+
+                {/* Sources Section - Only show if valid sources exist AND global toggle is ON */}
+                {isBot && withSources && msg.sources && msg.sources.length > 0 && (
+                    <div className="sources-section">
+                        <div className="sources-title">Sources</div>
+                        <div className="sources-list">
+                            {msg.sources.map((s, i) => (
+                                <a
+                                    key={i}
+                                    href={s.source?.startsWith('http') ? s.source : '#'}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="source-chip"
+                                >
+                                    {i + 1}. {s.title || 'Document'}
+                                </a>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
     );
 }
