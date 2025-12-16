@@ -33,6 +33,20 @@ export async function ask(query, withSources = true, signal) {
   return data; // { answer: string, sources: [...] }
 }
 
+export async function speak(text) {
+  const res = await fetch(`${BASE_URL}/api/speak`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+
+  if (!res.ok) {
+     const data = await res.json().catch(() => ({}));
+     throw new Error(data?.detail || 'TTS generation failed');
+  }
+  return await res.blob(); // Returns a WAV blob
+}
+
 export async function transcribeAudio(audioBlob) {
   const formData = new FormData();
   formData.append('file', audioBlob, 'recording.wav');

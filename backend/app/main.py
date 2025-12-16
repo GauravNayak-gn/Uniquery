@@ -10,6 +10,8 @@ from typing import List, Optional
 
 # Import your RAG setup
 from .rag_setup import create_rag_chain, get_sources_from_query
+from .tts_piper import ensure_model_exists, generate_audio_stream
+from fastapi.responses import StreamingResponse
 
 # --- Load environment variables ---
 load_dotenv()
@@ -74,6 +76,12 @@ async def startup_event():
     except Exception as e:
         logger.exception("❌ Failed to initialize RAG chain: %s", e)
         raise RuntimeError("Failed to initialize RAG chain. Check server logs.")
+
+    # Initialize Piper TTS (download model if needed)
+    try:
+        await asyncio.to_thread(ensure_model_exists)
+    except Exception as e:
+        logger.warning(f"⚠️ Piper TTS model download failed: {e}")
 
 
 # --- API Endpoints ---
@@ -175,6 +183,28 @@ async def debug_sources(query: str = "What is D.K. Bhave scholarship?"):
     except Exception as e:
         logger.exception("❌ Debug retrieval failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Debug retrieval failed: {str(e)}")
+
+# --- TTS Endpoint (Piper) ---
+class SpeakRequest(BaseModel):
+    text: str
+
+@app.post("/api/speak", summary="Generate speech using Piper TTS", tags=["TTS"])
+async def speak_text(request: SpeakRequest):
+    """
+    Generates audio from text using local Piper TTS (en_US-lessac-medium).
+    Returns a WAV audio stream.
+    """
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty.")
+    
+    try:
+        # Generate audio stream (in-memory WAV)
+        audio_buffer = await asyncio.to_thread(generate_audio_stream, request.text)
+        return StreamingResponse(audio_buffer, media_type="audio/wav")
+    except Exception as e:
+        logger.exception("❌ TTS Generation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
+
 
 # --- STT Endpoint ---
 import speech_recognition as sr

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ask, healthCheck, transcribeAudio } from './api/client';
+import { ask, healthCheck, transcribeAudio, speak } from './api/client';
 import { audioBufferToWav } from './utils/wav_utils';
 
 const Icons = {
@@ -34,19 +34,16 @@ const Icons = {
     )
 };
 
-// ... inside App component render ...
-// Replace 🗑️ with <Icons.Trash />
-// Replace 📄 with <Icons.FileText />
-// Replace 🎤 with <Icons.Mic />
-// Replace 🔴 with <Icons.StopCircle />
-
-
 export default function App() {
     const [apiStatus, setApiStatus] = useState({ ok: false, message: 'Connecting…' });
     const [messages, setMessages] = useState([]); // Array of { id, role, text, sources? }
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
-    const [isSpeaking, setIsSpeaking] = useState(false);
+
+    // TTS State
+    const [currentSpeakingId, setCurrentSpeakingId] = useState(null);
+    const audioRef = useRef(null);
+
     const [isListening, setIsListening] = useState(false);
 
     // Settings
@@ -72,7 +69,7 @@ export default function App() {
 
         return () => {
             ctrl.abort();
-            window.speechSynthesis.cancel();
+            if (audioRef.current) audioRef.current.pause();
         };
     }, []);
 
@@ -94,8 +91,7 @@ export default function App() {
         setLoading(true);
 
         // Stop TTS if speaking
-        window.speechSynthesis.cancel();
-        setIsSpeaking(false);
+        stopTTS();
 
         // Abort previous request
         if (abortControllerRef.current) abortControllerRef.current.abort();
@@ -122,6 +118,9 @@ export default function App() {
 
     const startRecording = async () => {
         try {
+            // Stop TTS if talking
+            stopTTS();
+
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const mediaRecorder = new MediaRecorder(stream);
             mediaRecorderRef.current = mediaRecorder;
@@ -137,14 +136,13 @@ export default function App() {
                 setIsListening(false);
                 const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
 
-                // Convert to WAV because backend speech_recognition prefers it
                 try {
                     const arrayBuffer = await audioBlob.arrayBuffer();
                     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                     const decodedData = await audioContext.decodeAudioData(arrayBuffer);
                     const wavBlob = await audioBufferToWav(decodedData);
 
-                    setInput('Transcibing...');
+                    setInput('Transcribing...');
                     const text = await transcribeAudio(wavBlob);
                     setInput(text);
                 } catch (err) {
@@ -152,7 +150,6 @@ export default function App() {
                     setInput('');
                 }
 
-                // Stop tracks
                 stream.getTracks().forEach(track => track.stop());
             };
 
@@ -174,6 +171,47 @@ export default function App() {
         else startRecording();
     };
 
+    // --- TTS Logic using Backend (Piper) ---
+    const playTTS = async (text, msgId) => {
+        // If already speaking this message, stop it
+        if (currentSpeakingId === msgId) {
+            stopTTS();
+            return;
+        }
+
+        stopTTS(); // Stop any other message
+        setCurrentSpeakingId(msgId);
+
+        try {
+            const audioBlob = await speak(text);
+            const url = URL.createObjectURL(audioBlob);
+            const audio = new Audio(url);
+
+            audio.onended = () => {
+                setCurrentSpeakingId(null);
+                URL.revokeObjectURL(url);
+            };
+
+            audio.onerror = () => {
+                setCurrentSpeakingId(null);
+                alert("Failed to play audio.");
+            };
+
+            audioRef.current = audio;
+            audio.play();
+        } catch (err) {
+            console.error(err);
+            setCurrentSpeakingId(null);
+        }
+    };
+
+    const stopTTS = () => {
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current = null;
+        }
+        setCurrentSpeakingId(null);
+    };
 
     return (
         <div className="layout">
@@ -213,8 +251,8 @@ export default function App() {
                         <MessageItem
                             key={msg.id}
                             msg={msg}
-                            isSpeaking={isSpeaking}
-                            setIsSpeaking={setIsSpeaking}
+                            isSpeaking={currentSpeakingId === msg.id}
+                            onSpeak={() => playTTS(msg.text, msg.id)}
                             withSources={withSources}
                         />
                     ))
@@ -272,22 +310,8 @@ export default function App() {
 }
 
 // Sub-components
-function MessageItem({ msg, isSpeaking, setIsSpeaking, withSources }) {
+function MessageItem({ msg, isSpeaking, onSpeak, withSources }) {
     const isBot = msg.role === 'bot';
-
-    const handleSpeak = () => {
-        if (!window.speechSynthesis) return;
-        if (isSpeaking) {
-            window.speechSynthesis.cancel();
-            setIsSpeaking(false);
-        } else {
-            const ut = new SpeechSynthesisUtterance(msg.text);
-            ut.onend = () => setIsSpeaking(false);
-            ut.onerror = () => setIsSpeaking(false);
-            setIsSpeaking(true);
-            window.speechSynthesis.speak(ut);
-        }
-    };
 
     return (
         <div className={`message ${msg.role}`}>
@@ -297,7 +321,7 @@ function MessageItem({ msg, isSpeaking, setIsSpeaking, withSources }) {
                     <div className="text">{msg.text}</div>
                     {isBot && (
                         <div className="bubble-actions">
-                            <button onClick={handleSpeak} className="action-btn" title="Read Aloud">
+                            <button onClick={onSpeak} className="action-btn" title="Read Aloud">
                                 {isSpeaking ? <Icons.StopCircle /> : <span style={{ fontSize: '1.2em' }}>🔊</span>}
                             </button>
                         </div>
