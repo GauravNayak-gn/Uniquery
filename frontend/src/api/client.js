@@ -32,3 +32,19 @@ export async function ask(query, withSources = true, signal) {
 
   return data; // { answer: string, sources: [...] }
 }
+
+export async function transcribeAudio(audioBlob) {
+  const formData = new FormData();
+  formData.append('file', audioBlob, 'recording.wav');
+
+  const res = await fetch(`${BASE_URL}/api/transcribe`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.detail || 'Transcription failed');
+  }
+  return data.text;
+}

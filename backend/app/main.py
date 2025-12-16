@@ -175,3 +175,49 @@ async def debug_sources(query: str = "What is D.K. Bhave scholarship?"):
     except Exception as e:
         logger.exception("❌ Debug retrieval failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Debug retrieval failed: {str(e)}")
+
+# --- STT Endpoint ---
+import speech_recognition as sr
+import shutil
+import tempfile
+import os
+from fastapi import UploadFile, File
+
+@app.post("/api/transcribe", summary="Transcribe audio file using Google Speech Recognition", tags=["STT"])
+async def transcribe_audio(file: UploadFile = File(...)):
+    """
+    Receives an audio file (typically WAV or FLAC), saves it temporarily, and uses
+    SpeechRecognition (Google Web Speech API) to transcribe it.
+    """
+    temp_filename = f"temp_{file.filename}"
+    try:
+        # Save uploaded file temporarily
+        with open(temp_filename, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        logger.info(f"🎤 Transcribing audio: {temp_filename}")
+        
+        # Use SpeechRecognition
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(temp_filename) as source:
+            # record the audio from the file
+            audio_data = recognizer.record(source)
+            # transcribe
+            text = await asyncio.to_thread(recognizer.recognize_google, audio_data)
+            
+        logger.info(f"✅ Transcription result: {text}")
+        return {"text": text}
+
+    except sr.UnknownValueError:
+        logger.warning("STT: Could not understand audio")
+        raise HTTPException(status_code=400, detail="Could not understand audio")
+    except sr.RequestError as e:
+        logger.error(f"STT: Service error: {e}")
+        raise HTTPException(status_code=503, detail=f"Speech service unavailable: {str(e)}")
+    except Exception as e:
+        logger.exception("❌ Transcription failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+    finally:
+        # Cleanup temp file
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)

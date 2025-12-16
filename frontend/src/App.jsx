@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ask, healthCheck } from './api/client';
+import { ask, healthCheck, transcribeAudio } from './api/client';
+import { audioBufferToWav } from './utils/wav_utils';
 
 const Icons = {
     Trash: () => (
@@ -54,7 +55,8 @@ export default function App() {
     // Refs
     const bottomRef = useRef(null);
     const abortControllerRef = useRef(null);
-    const recognitionRef = useRef(null);
+    const mediaRecorderRef = useRef(null);
+    const audioChunksRef = useRef([]);
 
     const baseUrl = useMemo(
         () => (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, ''),
@@ -65,34 +67,11 @@ export default function App() {
     useEffect(() => {
         const ctrl = new AbortController();
         healthCheck(ctrl.signal)
-            .then((res) => {
-                setApiStatus({ ok: true, message: 'Online' });
-            })
-            .catch(() => {
-                setApiStatus({ ok: false, message: 'Offline' });
-            });
-
-        // Init STT
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (SpeechRecognition) {
-            const recognition = new SpeechRecognition();
-            recognition.continuous = false; // Stop after one sentence/phrase
-            recognition.lang = 'en-US';
-            recognition.interimResults = false;
-
-            recognition.onstart = () => setIsListening(true);
-            recognition.onend = () => setIsListening(false);
-            recognition.onerror = () => setIsListening(false);
-            recognition.onresult = (event) => {
-                const transcript = event.results[0][0].transcript;
-                setInput((prev) => (prev ? prev + ' ' + transcript : transcript));
-            };
-            recognitionRef.current = recognition;
-        }
+            .then(() => setApiStatus({ ok: true, message: 'Online' }))
+            .catch(() => setApiStatus({ ok: false, message: 'Offline' }));
 
         return () => {
             ctrl.abort();
-            if (recognitionRef.current) recognitionRef.current.abort();
             window.speechSynthesis.cancel();
         };
     }, []);
@@ -141,11 +120,60 @@ export default function App() {
         }
     };
 
-    const toggleListening = () => {
-        if (!recognitionRef.current) return alert('Speech recognition not supported');
-        if (isListening) recognitionRef.current.stop();
-        else recognitionRef.current.start();
+    const startRecording = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mediaRecorder = new MediaRecorder(stream);
+            mediaRecorderRef.current = mediaRecorder;
+            audioChunksRef.current = [];
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunksRef.current.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = async () => {
+                setIsListening(false);
+                const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+
+                // Convert to WAV because backend speech_recognition prefers it
+                try {
+                    const arrayBuffer = await audioBlob.arrayBuffer();
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const decodedData = await audioContext.decodeAudioData(arrayBuffer);
+                    const wavBlob = await audioBufferToWav(decodedData);
+
+                    setInput('Transcibing...');
+                    const text = await transcribeAudio(wavBlob);
+                    setInput(text);
+                } catch (err) {
+                    alert('Transcription failed: ' + err.message);
+                    setInput('');
+                }
+
+                // Stop tracks
+                stream.getTracks().forEach(track => track.stop());
+            };
+
+            mediaRecorder.start();
+            setIsListening(true);
+        } catch (err) {
+            alert('Cannot access microphone: ' + err.message);
+        }
     };
+
+    const stopRecording = () => {
+        if (mediaRecorderRef.current && isListening) {
+            mediaRecorderRef.current.stop();
+        }
+    };
+
+    const toggleListening = () => {
+        if (isListening) stopRecording();
+        else startRecording();
+    };
+
 
     return (
         <div className="layout">
