@@ -95,9 +95,7 @@ export default function App() {
                                 type="checkbox"
                                 checked={withSources}
                                 onChange={(e) => {
-                                    const val = e.target.checked;
-                                    setWithSources(val);
-                                    if (!val) setSources([]); // hide instantly when toggled off
+                                    setWithSources(e.target.checked);
                                 }}
                             />
                             <label htmlFor="withSources">Return sources (/api/ask_with_sources)</label>
