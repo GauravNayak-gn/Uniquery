@@ -43,7 +43,7 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM
 # Device: "cpu", "cuda", "mps", or "auto"
 DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu").lower()
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemma-3-27b-it"
 LLM_MODEL = os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
 RAG_TEMPERATURE = float(os.getenv("RAG_TEMPERATURE", "0"))
 RAG_MAX_OUTPUT_TOKENS = int(os.getenv("RAG_MAX_OUTPUT_TOKENS", "768"))

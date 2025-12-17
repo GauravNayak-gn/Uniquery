@@ -62,15 +62,20 @@ def generate_audio_stream(text: str):
     
     import subprocess
     import io
+    import tempfile
+    import shutil
     
     # Locate piper executable
-    # On Windows/Linux with uv/venv, it should be in the path as 'piper'
     piper_cmd = "piper"
     
+    # Create a temp file path (we close the file handle so piper can open it)
+    # We use a context manager for the prompt creation, but we need a named file for output
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
+        tmp_wav_path = tmp_wav.name
+    
     try:
-        # Command: echo "text" | piper -m <model> -f -
-        # -f - tells Piper to write WAV to stdout
-        cmd = [piper_cmd, "-m", MODEL_PATH, "-f", "-"]
+        # Command: echo "text" | piper -m <model> -f <temp_file>
+        cmd = [piper_cmd, "-m", MODEL_PATH, "-f", tmp_wav_path]
         
         logger.info(f"🎤 Running Piper CLI: {' '.join(cmd)}")
         
@@ -89,16 +94,27 @@ def generate_audio_stream(text: str):
             logger.error(f"❌ Piper CLI failed (code {process.returncode}): {err_msg}")
             raise RuntimeError(f"Piper CLI failed: {err_msg}")
             
-        if not stdout_data or len(stdout_data) < 100:
-             logger.warning(f"⚠️ Piper produced suspiciously small output ({len(stdout_data)} bytes). stderr: {stderr_data.decode()}")
+        # Read the generated WAV file
+        with open(tmp_wav_path, "rb") as f:
+            wav_data = f.read()
+            
+        if len(wav_data) < 100:
+             logger.warning(f"⚠️ Piper produced suspiciously small output ({len(wav_data)} bytes). stderr: {stderr_data.decode()}")
         
-        # stdout_data is already a valid WAV file (header + pcm)
-        return io.BytesIO(stdout_data)
+        return io.BytesIO(wav_data)
 
     except Exception as e:
         logger.error(f"❌ Failed to run Piper CLI: {e}")
-        # Fallback debug: print if piper is actually findable
         import shutil
         if not shutil.which(piper_cmd):
             logger.error("❌ 'piper' executable not found in PATH.")
         raise e
+    finally:
+        # Cleanup
+        if os.path.exists(tmp_wav_path):
+            try:
+                os.remove(tmp_wav_path)
+            except Exception:
+                pass
+
+
