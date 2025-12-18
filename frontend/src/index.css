@@ -1,32 +1,15 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@700&display=swap');
 
 :root {
-    /* Dark Theme Palette */
-    --bg-app: #0f172a;
-    /* Slate 900 */
-    --bg-header: #1e293b;
-    /* Slate 800 */
-    --bg-chat: #0f172a;
-    --bg-input: #1e293b;
-
-    --msg-user: #3b82f6;
-    /* Blue 500 */
-    --msg-bot: #334155;
-    /* Slate 700 */
-
-    --text-primary: #f8fafc;
-    /* Slate 50 */
-    --text-secondary: #94a3b8;
-    /* Slate 400 */
-
-    --border: #334155;
-    --accent: #3b82f6;
-    --danger: #ef4444;
-    --success: #22c55e;
-}
-
-* {
-    box-sizing: border-box;
+    --bg-app: #f8fafc;
+    /* Light grey/blue background from image */
+    --text-primary: #1e293b;
+    --text-secondary: #64748b;
+    --accent: #64748b;
 }
 
 body {
@@ -35,9 +18,10 @@ body {
     font-family: 'Inter', sans-serif;
     background-color: var(--bg-app);
     color: var(--text-primary);
-    height: 100vh;
-    overflow: hidden;
-    /* App handles scrolling */
+}
+
+.font-serif {
+    font-family: 'Playfair Display', serif;
 }
 
 /* Custom Scrollbar for Webkit */
