@@ -210,6 +210,7 @@ export default function App() {
     const stopTTS = () => {
         if (audioRef.current) {
             audioRef.current.pause();
+            audioRef.current.currentTime = 0;
             audioRef.current = null;
         }
         setCurrentSpeakingId(null);
@@ -407,16 +408,14 @@ function MessageItem({ msg, isSpeaking, onSpeak, withSources }) {
                                 <span>Listen</span>
                             </button>
 
-                            {withSources && msg.sources && msg.sources.length > 0 && (
-                                <button
-                                    onClick={() => setShowSources(!showSources)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded-xl text-slate-600 hover:bg-slate-50 transition-colors font-medium"
-                                >
-                                    <Icons.FileText className="w-5 h-5" />
-                                    <span>{msg.sources.length} {msg.sources.length === 1 ? 'source' : 'sources'}</span>
-                                    {showSources ? <Icons.ChevronUp /> : <Icons.ChevronDown />}
-                                </button>
-                            )}
+                            <button
+                                onClick={() => setShowSources(!showSources)}
+                                className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all font-medium ${showSources ? 'bg-[#f4a222] text-white shadow-md' : 'text-slate-600 hover:bg-[#f4a222] hover:text-white hover:shadow-md'}`}
+                            >
+                                <Icons.FileText className="w-5 h-5" />
+                                <span>{msg.sources.length} {msg.sources.length === 1 ? 'source' : 'sources'}</span>
+                                {showSources ? <Icons.ChevronUp /> : <Icons.ChevronDown />}
+                            </button>
                         </div>
                     )}
                 </div>
